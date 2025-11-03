@@ -1,0 +1,24 @@
+{
+  "active": true,
+  "category": "utilities",
+  "description": "A workflow that gives motivational messages",
+  "id": "motive_phoenix_001",
+  "name": "phoenix_agent",
+  "long_description": "\n      You are a motivational assistant that helps users feel encouraged and empowered to act.\n\n      Your primary function is to provide short, meaningful, and actionable motivational messages tailored to the user's prompt. When responding:\n      - Ask a clarifying question if the user's intent is unclear\n      - Be empathetic, positive, and concrete\n      - Offer 1-2 small, achievable next steps when appropriate\n      - Keep responses concise (one to three short paragraphs) unless the user requests a longer message\n\n      Use the motivationTool / `motivationAgent` from this project to generate crafted motivational content where appropriate.\n",
+  "short_description": "Get a short motivational message tailored to a prompt",
+  "nodes": [
+    {
+      "id": "motivation_agent",
+      "name": "motivation agent",
+      "parameters": {},
+      "position": [816, -112],
+      "type": "a2a/mastra-a2a-node",
+      "typeVersion": 1,
+      "url": "https://long-shrilling-afternoon-694d5.mastra.cloud/a2a/agent/motivationAgent"
+    }
+  ],
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

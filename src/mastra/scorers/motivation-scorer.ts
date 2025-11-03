@@ -4,7 +4,8 @@ import { createCompletenessScorer } from '@mastra/evals/scorers/code';
 import { createScorer } from '@mastra/core/scores';
 
 export const toolCallAppropriatenessScorer = createToolCallAccuracyScorerCode({
-  expectedTool: 'motivationTool',
+  // This must match the tool id in `motivation-tool.ts` ("generate-motivation").
+  expectedTool: 'generate-motivation',
   strictMode: false,
 });
 
