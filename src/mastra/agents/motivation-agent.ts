@@ -18,7 +18,7 @@ export const motivationAgent = new Agent({
 
       Use the motivationTool to generate crafted motivational content when appropriate.
 `,
-  model: 'google/gemini-2.5-pro',
+  model: 'google/gemini-2.5-flash',
   tools: { motivationTool },
   scorers: {
     toolCallAppropriateness: {
