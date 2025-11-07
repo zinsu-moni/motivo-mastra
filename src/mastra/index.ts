@@ -5,7 +5,7 @@ import { LibSQLStore } from '@mastra/libsql';
 import { motivationWorkflow } from './workflows/motivation-workflow';
 import { motivationAgent } from './agents/motivation-agent';
 import { toolCallAppropriatenessScorer, completenessScorer, toneScorer } from './scorers/motivation-scorer';
-
+import { a2aAgentRoute } from '../../scripts/a2a-client';
 export const mastra = new Mastra({
   workflows: { motivationWorkflow },
   agents: { motivationAgent },
@@ -26,4 +26,10 @@ export const mastra = new Mastra({
     // Enables DefaultExporter and CloudExporter for AI tracing
     default: { enabled: true }, 
   },
-});
+    server: {
+    build: {
+      openAPIDocs: true,
+      swaggerUI: true,
+    },
+        apiRoutes: [a2aAgentRoute]
+})

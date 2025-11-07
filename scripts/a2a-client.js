@@ -1,156 +1,137 @@
-#!/usr/bin/env node
-/**
- * Simple A2A client example.
- * Usage (PowerShell):
- *   $env:MASTRA_HOST = 'https://your-mastra-host'
- *   $env:AGENT_ID = 'motivationAgent'
- *   $env:MASTRA_API_KEY = '...'
- *   node .\scripts\a2a-client.js
- *
- * The script demonstrates:
- * 1) message/send (creates a task and returns task data)
- * 2) tasks/get (fetches task by id)
- * 3) message/stream (requests a streaming response for the same task)
- *
- * It requires Node 18+ (global fetch + Web Streams API). If you use older Node, install node-fetch and adjust accordingly.
- */
+import { registerApiRoute } from '@mastra/core/server';
+import { randomUUID } from 'crypto';
 
-const { randomUUID } = require("crypto");
-
-const HOST = process.env.MASTRA_HOST || "http://localhost:3000";
-const AGENT_ID = process.env.AGENT_ID || "motivationAgent";
-const API_KEY = process.env.MASTRA_API_KEY || process.env.X_API_KEY || null;
-
-const BASE_URL = HOST.replace(/\/$/, "");
-const A2A_URL = `${BASE_URL}/a2a/${AGENT_ID}`;
-
-if (typeof fetch === "undefined") {
-  console.error("This script requires Node 18+ with global fetch (or adapt the script to use node-fetch).");
-  process.exit(1);
-}
-
-async function post(body, extra = {}) {
-  const headers = { "content-type": "application/json" };
-  if (API_KEY) headers["x-api-key"] = API_KEY;
-  const res = await fetch(A2A_URL, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-    ...extra
-  });
-  const text = await res.text();
-  // Some endpoints (message/stream) return text streams; here we try parse JSON when possible
-  try {
-    return JSON.parse(text);
-  } catch (e) {
-    return text;
-  }
-}
-
-async function sendMessage(text) {
-  const messageId = randomUUID();
-  console.log(`Sending message/send (messageId=${messageId}) to ${A2A_URL}...`);
-  const body = {
-    method: "message/send",
-    params: {
-      message: {
-        role: "user",
-        parts: [{ kind: "text", text }],
-        kind: "message",
-        messageId
-      }
-    }
-  };
-  const result = await post(body);
-  if (!result || !result.result) {
-    console.error("Unexpected response for message/send:", result);
-    process.exit(1);
-  }
-  const task = result.result;
-  console.log("message/send -> task id:", task.id);
-  return task.id;
-}
-
-async function getTask(taskId) {
-  console.log(`Calling tasks/get for id=${taskId}...`);
-  const body = { method: "tasks/get", params: { id: taskId } };
-  const resp = await post(body);
-  console.log("tasks/get ->", JSON.stringify(resp, null, 2));
-}
-
-async function streamMessage(taskId, text) {
-  console.log(`Starting message/stream for taskId=${taskId}...`);
-  const messageId = randomUUID();
-  const body = {
-    method: "message/stream",
-    params: {
-      message: {
-        role: "user",
-        parts: [{ kind: "text", text }],
-        kind: "message",
-        messageId,
-        taskId
-      }
-    }
-  };
-
-  const headers = { "content-type": "application/json" };
-  if (API_KEY) headers["x-api-key"] = API_KEY;
-
-  const res = await fetch(A2A_URL, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body)
-  });
-
-  if (!res.ok) {
-    const txt = await res.text();
-    console.error("message/stream failed:", res.status, txt);
-    return;
-  }
-
-  // The server sends JSON chunks separated by the ASCII record separator (0x1E)
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const parts = buffer.split("\u001e");
-    buffer = parts.pop();
-    for (const p of parts) {
-      if (!p) continue;
-      try {
-        const chunk = JSON.parse(p);
-        console.log("stream chunk:", JSON.stringify(chunk));
-      } catch (e) {
-        console.log("non-json chunk:", p);
-      }
-    }
-  }
-  if (buffer) {
+export const a2aAgentRoute = registerApiRoute('/a2a/agent/:agentId', {
+  method: 'POST',
+  handler: async (c) => {
     try {
-      console.log("stream final:", JSON.parse(buffer));
-    } catch (e) {
-      console.log("stream final raw:", buffer);
+      const mastra = c.get('mastra');
+      const agentId = c.req.param('agentId');
+
+      // Parse JSON-RPC 2.0 request
+      const body = await c.req.json();
+      const { jsonrpc, id: requestId, method, params } = body;
+
+      // Validate JSON-RPC 2.0 format
+      if (jsonrpc !== '2.0' || !requestId) {
+        return c.json({
+          jsonrpc: '2.0',
+          id: requestId || null,
+          error: {
+            code: -32600,
+            message: 'Invalid Request: jsonrpc must be "2.0" and id is required'
+          }
+        }, 400);
+      }
+
+      const agent = mastra.getAgent(agentId);
+      if (!agent) {
+        return c.json({
+          jsonrpc: '2.0',
+          id: requestId,
+          error: {
+            code: -32602,
+            message: `Agent '${agentId}' not found`
+          }
+        }, 404);
+      }
+
+      // Extract messages from params
+      const { message, messages, contextId, taskId, metadata } = params || {};
+
+      let messagesList = [];
+      if (message) {
+        messagesList = [message];
+      } else if (messages && Array.isArray(messages)) {
+        messagesList = messages;
+      }
+
+      // Convert A2A messages to Mastra format
+      const mastraMessages = messagesList.map((msg) => ({
+        role: msg.role,
+        content: msg.parts?.map((part) => {
+          if (part.kind === 'text') return part.text;
+          if (part.kind === 'data') return JSON.stringify(part.data);
+          return '';
+        }).join('\n') || ''
+      }));
+
+      // Execute agent
+      const response = await agent.generate(mastraMessages);
+      const agentText = response.text || '';
+
+      // Build artifacts array
+      const artifacts = [
+        {
+          artifactId: randomUUID(),
+          name: `${agentId}Response`,
+          parts: [{ kind: 'text', text: agentText }]
+        }
+      ];
+
+      // Add tool results as artifacts
+      if (response.toolResults && response.toolResults.length > 0) {
+        artifacts.push({
+          artifactId: randomUUID(),
+          name: 'ToolResults',
+          parts: response.toolResults.map((result) => ({
+            kind: 'data',
+            data: result
+          }))
+        });
+      }
+
+      // Build conversation history
+      const history = [
+        ...messagesList.map((msg) => ({
+          kind: 'message',
+          role: msg.role,
+          parts: msg.parts,
+          messageId: msg.messageId || randomUUID(),
+          taskId: msg.taskId || taskId || randomUUID(),
+        })),
+        {
+          kind: 'message',
+          role: 'agent',
+          parts: [{ kind: 'text', text: agentText }],
+          messageId: randomUUID(),
+          taskId: taskId || randomUUID(),
+        }
+      ];
+
+      // Return A2A-compliant response
+      return c.json({
+        jsonrpc: '2.0',
+        id: requestId,
+        result: {
+          id: taskId || randomUUID(),
+          contextId: contextId || randomUUID(),
+          status: {
+            state: 'completed',
+            timestamp: new Date().toISOString(),
+            message: {
+              messageId: randomUUID(),
+              role: 'agent',
+              parts: [{ kind: 'text', text: agentText }],
+              kind: 'message'
+            }
+          },
+          artifacts,
+          history,
+          kind: 'task'
+        }
+      });
+
+    } catch (error) {
+      return c.json({
+        jsonrpc: '2.0',
+        id: null,
+        error: {
+          code: -32603,
+          message: 'Internal error',
+          data: { details: error.message }
+        }
+      }, 500);
     }
   }
-}
-
-async function main() {
-  try {
-    const text = process.argv.slice(2).join(" ") || "I need some motivation to finish my project.";
-    const taskId = await sendMessage(text);
-    // Wait a short moment to let the agent start processing
-    await new Promise((r) => setTimeout(r, 500));
-    await getTask(taskId);
-    await streamMessage(taskId, "Please continue or expand on the previous response.");
-    console.log("Done.");
-  } catch (err) {
-    console.error(err);
-    process.exit(1);
-  }
-}
-
-if (require.main === module) main();
+});
